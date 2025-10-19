@@ -1,0 +1,53 @@
+run:
+  train: true # run training?
+  gui: true # open drawing GUI after training (or after loading)
+  viz: false # show first-layer weight tiles in matplotlib
+
+
+# Train or load from weights
+weights:
+  save_path: ./artifacts/mnist_relu_best.npz
+  load_if_exists: true # if true and file exists, load instead of training
+
+
+seed: 42
+
+
+model:
+  input_dim: 784
+  hidden_dim: 64
+  output_dim: 10
+
+
+# Data loading (MNIST via OpenML on first run)
+data:
+  dataset: mnist
+  test_size: 10000
+  random_state: 42
+  dataset_limit: null # e.g., 8000 to speed up GA demos
+
+
+# Training block — choose one trainer
+train:
+  trainer: sgd # sgd | ga | hybrid
+  sgd:
+    epochs: 5
+    batch_size: 128
+    lr: 0.05
+  ga:
+    pop_size: 20
+    generations: 6
+    sigma: 0.05
+    elite_frac: 0.1
+    tournament_k: 3
+    fitness_batch: 2000
+
+
+# Visualization
+viz:
+  max_units: 64
+
+
+# GUI
+gui:
+  cell_px: 12
