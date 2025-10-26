@@ -1,36 +1,43 @@
-from __future__ import annotations
+# optim/sgd.py
 import numpy as np
-from models.mlp import MLP
 
-
-
-
-def sgd_train(model: MLP, X, y, X_val, y_val, *, epochs=5, batch_size=128, lr=0.05, seed=0, verbose=True):
+def sgd_train(model, X_train, y_train, X_val, y_val, epochs=10, batch_size=128, lr=0.05, seed=42):
     rng = np.random.default_rng(seed)
-    N = X.shape[1]
-    indices = np.arange(N)
-    best_val = 0.0
-    best_state = model.flatten().copy()
+    N = X_train.shape[1]
 
+    best_val = -np.inf
+    best_vec = model.flatten().copy()
 
-    for ep in range(1, epochs + 1):
-        rng.shuffle(indices)
+    for epoch in range(1, epochs + 1):
+        # Shuffle
+        idx = rng.permutation(N)
+        X_tr = X_train[:, idx]
+        y_tr = y_train[idx]
+
+        # Mini-batches
         for start in range(0, N, batch_size):
             end = min(start + batch_size, N)
-            idx = indices[start:end]
-            Xb = X[:, idx]
-            yb = y[idx]
+            Xb = X_tr[:, start:end]
+            yb = y_tr[start:end]
+
             loss, grads = model.loss_and_grads(Xb, yb)
-            model.W1 -= lr * grads['dW1']
-            model.b1 -= lr * grads['db1']
-            model.W2 -= lr * grads['dW2']
-            model.b2 -= lr * grads['db2']
-        tr = model.accuracy(X, y)
-        val = model.accuracy(X_val, y_val)
-        if verbose:
-            print(f"[sgd] epoch {ep:02d} | train_acc={tr:.4f} | val_acc={val:.4f}")
-        if val > best_val:
-            best_val = val
-            best_state = model.flatten().copy()
-    model.unflatten_into(best_state)
-    return {"best_val_acc": best_val}
+
+            # Parameter-Update (listenbasiert)
+            for i in range(len(model.W)):
+                model.W[i] -= lr * grads["W"][i]
+            for i in range(len(model.b)):
+                model.b[i] -= lr * grads["b"][i]
+
+        # Logging pro Epoche
+        train_acc = model.accuracy(X_train, y_train)
+        val_acc   = model.accuracy(X_val, y_val)
+        print(f"[sgd] epoch {epoch:03d} | train_acc={train_acc:.4f} | val_acc={val_acc:.4f}")
+
+        # Best-State sichern
+        if val_acc > best_val:
+            best_val = val_acc
+            best_vec = model.flatten().copy()
+
+    # bestes Modell zurückspielen
+    model.unflatten_into(best_vec)
+    return best_val

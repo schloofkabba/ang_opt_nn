@@ -1,24 +1,31 @@
-from __future__ import annotations
+# utils/visualize.py
 import math
 import numpy as np
 import matplotlib.pyplot as plt
 
+def show_first_layer_weights(model, max_to_show=64):
+    """
+    Zeigt die ersten-Layer-Gewichte als 28x28 Tiles.
+    """
+    W_first = model.W[0]  # (H1, 784)
+    H1, D = W_first.shape
+    n = min(H1, max_to_show)
 
+    cols = int(math.ceil(math.sqrt(n)))
+    rows = int(math.ceil(n / cols))
 
+    fig, axes = plt.subplots(rows, cols, figsize=(cols*2.0, rows*2.0))
+    axes = np.atleast_2d(axes)
 
-def show_first_layer_weights(model, max_to_show: int = 64):
-    H = model.cfg.hidden_dim
-    n = min(H, max_to_show)
-    cols = int(math.sqrt(n)) or 1
-    rows = math.ceil(n / cols)
-    fig, axes = plt.subplots(rows, cols, figsize=(cols*2, rows*2))
-    axes = np.array(axes).reshape(rows, cols)
     for i in range(rows*cols):
-        ax = axes[i // cols, i % cols]
+        r, c = divmod(i, cols)
+        ax = axes[r, c]
         ax.axis('off')
         if i < n:
-            w = model.W1[i].reshape(28, 28)
-            ax.imshow(w, cmap='gray')
-    plt.suptitle('First-layer weights (as 28x28)')
+            w = W_first[i, :].reshape(28, 28)
+            # Skala für bessere Sichtbarkeit normalisieren
+            m = np.max(np.abs(w)) + 1e-8
+            ax.imshow(w, cmap='gray', vmin=-m, vmax=m)
+            ax.set_title(f"h{i}", fontsize=8)
     plt.tight_layout()
     plt.show()

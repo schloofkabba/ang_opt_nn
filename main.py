@@ -1,149 +1,139 @@
-from __future__ import annotations
+# main.py
 import os
-import sys
-from pathlib import Path
 import yaml
+import numpy as np
+
 from models.mlp import MLP, NetConfig
+from utils.io import save_model, load_model, ensure_dir
+from utils.visualize import show_first_layer_weights
+
+# externe Module aus deinem Projekt
 from data.mnist import load_mnist
 from optim.sgd import sgd_train
-from optim.ga import GAConfig, ga_optimize
-from utils.io import save_model, load_model
-from utils.visualize import show_first_layer_weights
-from gui.draw_gui import DigitGUI
+from optim.ga import GAConfig, ga_optimize  # <== deine bestehende GA-Implementierung
 
-def load_config(path: str | os.PathLike) -> dict:
-    with open(path, 'r', encoding='utf-8') as f:
-        return yaml.safe_load(f)
-    
-def ensure_dirs(path: str | os.PathLike) -> None:
-    p = Path(path)
-    if p.suffix:
-        p.parent.mkdir(parents=True, exist_ok=True)
-    else:
-        p.mkdir(parents=True, exist_ok=True)
+def load_config(path="config.yaml"):
+    with open(path, "r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f)
 
-def maybe_load_or_init_model(cfg: dict):
+    # Rückwärtskompat: hidden_dim -> hidden_dims
+    mcfg = cfg.get("model", {})
+    if "hidden_dims" not in mcfg:
+        if "hidden_dim" in mcfg:
+            mcfg["hidden_dims"] = [int(mcfg["hidden_dim"])]
+        else:
+            mcfg["hidden_dims"] = [64]
+    cfg["model"] = mcfg
+    return cfg
+
+def main():
+    cfg = load_config("config.yaml")
+    rng = np.random.default_rng(cfg.get("seed", 42))
+
+    # Modell aufbauen
     net_cfg = NetConfig(
-        input_dim=cfg['model'].get('input_dim', 784),
-        hidden_dim=cfg['model'].get('hidden_dim', 64),
-        output_dim=cfg['model'].get('output_dim', 10),
-        seed=cfg.get('seed', 42),
-        )
-    weights_cfg = cfg['weights']
-    save_path = weights_cfg.get('save_path', './artifacts/mnist_relu_best.npz')
-    load_if_exists = bool(weights_cfg.get('load_if_exists', True))
+        input_dim=int(cfg["model"]["input_dim"]),
+        output_dim=int(cfg["model"]["output_dim"]),
+        hidden_dims=[int(h) for h in cfg["model"]["hidden_dims"]],
+    )
+    model = MLP(net_cfg, seed=cfg.get("seed", 42))
 
+    save_path = cfg["weights"]["save_path"]
+    do_train  = bool(cfg["run"]["train"])
+    do_gui    = bool(cfg["run"]["gui"])
+    do_viz    = bool(cfg["run"]["viz"])
 
-    if load_if_exists and os.path.exists(save_path):
-        print(f"[main] Loading existing model: {save_path}")
-        model = load_model(save_path)
-    else:
-        print("[main] Creating new model")
-        model = MLP(net_cfg)
-    return model
+    loaded = False
+    if cfg["weights"]["load_if_exists"] and os.path.exists(save_path):
+        model = load_model(save_path, seed=cfg.get("seed", 42))
+        loaded = True
 
-if __name__ == "__main__":
-    # Allow running from VS Code without adjusting cwd
-    proj_root = Path(__file__).resolve().parent
-    os.chdir(proj_root)
-
-
-    cfg = load_config('config.yaml')
-    run_cfg = cfg['run']
-    weights_cfg = cfg['weights']
-    save_path = weights_cfg.get('save_path', './artifacts/mnist_relu_best.npz')
-
-
-    model = maybe_load_or_init_model(cfg)
-
-
-    # TRAIN
-    if run_cfg.get('train', True):
+    if do_train and not loaded:
+        # Daten laden
         (X_train, y_train), (X_val, y_val), (X_test, y_test) = load_mnist(
-            dataset_limit=cfg['data'].get('dataset_limit'),
-            test_size=cfg['data'].get('test_size', 10000),
-            random_state=cfg['data'].get('random_state', 42),
+            dataset=cfg["data"]["dataset"],
+            test_size=int(cfg["data"]["test_size"]),
+            random_state=int(cfg["data"]["random_state"]),
+            dataset_limit=cfg["data"]["dataset_limit"],
         )
-        trainer = cfg['train'].get('trainer', 'sgd').lower()
-        print(f"[main] Trainer = {trainer}")
 
-
-        if trainer == 'sgd':
-            tcfg = cfg['train']['sgd']
-            stats = sgd_train(
+        trainer = cfg["train"]["trainer"].lower()
+        if trainer == "sgd":
+            sgd_cfg = cfg["train"]["sgd"]
+            best_val = sgd_train(
                 model,
                 X_train, y_train,
                 X_val, y_val,
-                epochs=int(tcfg.get('epochs', 5)),
-                batch_size=int(tcfg.get('batch_size', 128)),
-                lr=float(tcfg.get('lr', 0.05)),
-                seed=int(cfg.get('seed', 42)),
-                verbose=True,
+                epochs=int(sgd_cfg["epochs"]),
+                batch_size=int(sgd_cfg["batch_size"]),
+                lr=float(sgd_cfg["lr"]),
+                seed=cfg.get("seed", 42),
             )
-            print(f"[main] Best val acc: {stats['best_val_acc']:.4f}")
+            print(f"[main] SGD best val acc = {best_val:.4f}")
 
-
-        elif trainer == 'ga':
-            gcfg = cfg['train']['ga']
-            ga_cfg = GAConfig(
-                pop_size=int(gcfg.get('pop_size', 20)),
-                generations=int(gcfg.get('generations', 6)),
-                sigma=float(gcfg.get('sigma', 0.05)),
-                elite_frac=float(gcfg.get('elite_frac', 0.1)),
-                tournament_k=int(gcfg.get('tournament_k', 3)),
-                seed=int(cfg.get('seed', 42)),
-                fitness_batch=int(gcfg.get('fitness_batch', 2000)),
+        elif trainer == "ga":
+            ga_cfg = cfg["train"]["ga"]
+            gac = GAConfig(
+                pop_size=int(ga_cfg["pop_size"]),
+                generations=int(ga_cfg["generations"]),
+                sigma=float(ga_cfg["sigma"]),
+                elite_frac=float(ga_cfg["elite_frac"]),
+                tournament_k=int(ga_cfg["tournament_k"]),
+                seed=int(cfg.get("seed", 42)),
+                fitness_batch=int(ga_cfg["fitness_batch"]),
             )
-            best_genome, best_fit = ga_optimize(model, X_val, y_val, ga_cfg)
-            print(f"[main] GA done. Fitness: {best_fit:.5f}")
-            model.unflatten_into(best_genome)
+            best_vec, best_fit = ga_optimize(model, X_val, y_val, gac)
+            model.unflatten_into(best_vec)
+            print(f"[main] GA best fitness = {best_fit:.6f}")
 
-
-        elif trainer == 'hybrid':
-            gcfg = cfg['train']['ga']
-            ga_cfg = GAConfig(
-                pop_size=int(gcfg.get('pop_size', 20)),
-                generations=int(gcfg.get('generations', 6)),
-                sigma=float(gcfg.get('sigma', 0.05)),
-                elite_frac=float(gcfg.get('elite_frac', 0.1)),
-                tournament_k=int(gcfg.get('tournament_k', 3)),
-                seed=int(cfg.get('seed', 42)),
-                fitness_batch=int(gcfg.get('fitness_batch', 2000)),
+        elif trainer == "hybrid":
+            # Beispiel: GA -> SGD
+            ga_cfg = cfg["train"]["ga"]
+            gac = GAConfig(
+                pop_size=int(ga_cfg["pop_size"]),
+                generations=int(ga_cfg["generations"]),
+                sigma=float(ga_cfg["sigma"]),
+                elite_frac=float(ga_cfg["elite_frac"]),
+                tournament_k=int(ga_cfg["tournament_k"]),
+                seed=int(cfg.get("seed", 42)),
+                fitness_batch=int(ga_cfg["fitness_batch"]),
             )
-            best_genome, best_fit = ga_optimize(model, X_val, y_val, ga_cfg)
-            model.unflatten_into(best_genome)
-            print(f"[main] Hybrid: GA init done (fitness {best_fit:.5f}). Switching to SGD...")
-            tcfg = cfg['train']['sgd']
-            stats = sgd_train(
+            best_vec, best_fit = ga_optimize(model, X_val, y_val, gac)
+            model.unflatten_into(best_vec)
+            print(f"[main] GA best fitness = {best_fit:.6f}")
+
+            sgd_cfg = cfg["train"]["sgd"]
+            best_val = sgd_train(
                 model,
                 X_train, y_train,
                 X_val, y_val,
-                epochs=int(tcfg.get('epochs', 5)),
-                batch_size=int(tcfg.get('batch_size', 128)),
-                lr=float(tcfg.get('lr', 0.05)),
-                seed=int(cfg.get('seed', 42)),
-                verbose=True,
+                epochs=int(sgd_cfg["epochs"]),
+                batch_size=int(sgd_cfg["batch_size"]),
+                lr=float(sgd_cfg["lr"]),
+                seed=cfg.get("seed", 42),
             )
-            print(f"[main] Best val acc (post-SGD): {stats['best_val_acc']:.4f}")
+            print(f"[main] Hybrid (after SGD) best val acc = {best_val:.4f}")
+
         else:
             raise ValueError(f"Unknown trainer: {trainer}")
 
-
-        # Evaluate & save
-        test_acc = model.accuracy(X_test, y_test)
-        print(f"[main] Test accuracy: {test_acc:.4f}")
-        ensure_dirs(save_path)
+        # Nach Training speichern
+        ensure_dir(save_path)
         save_model(model, save_path)
-    else:
-        print("[main] Training disabled in config.yaml")
 
+        # Test-Performance (optional)
+        test_acc = model.accuracy(X_test, y_test)
+        print(f"[main] Test accuracy = {test_acc:.4f}")
 
-    # VIZ
-    if run_cfg.get('viz', False):
-        show_first_layer_weights(model, max_to_show=int(cfg['viz'].get('max_units', 64)))
-
+    # Visualisierung
+    if do_viz:
+        show_first_layer_weights(model, max_to_show=int(cfg["viz"]["max_units"]))
 
     # GUI
-    if run_cfg.get('gui', False):
-        app = DigitGUI(model, cell_px=int(cfg['gui'].get('cell_px', 12)))
+    if do_gui:
+        from gui.draw_gui import DigitGUI
+        app = DigitGUI(model, cell_px=int(cfg["gui"]["cell_px"]))
         app.run()
+
+if __name__ == "__main__":
+    main()
